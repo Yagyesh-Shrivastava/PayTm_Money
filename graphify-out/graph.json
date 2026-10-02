@@ -1,0 +1,23 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "claude_md_graphify",
+      "label": "graphify",
+      "author": null,
+      "captured_at": null,
+      "community": 0,
+      "community_name": "Project Configuration",
+      "contributor": null,
+      "file_type": "concept",
+      "norm_label": "graphify",
+      "source_file": "CLAUDE.md",
+      "source_location": null,
+      "source_url": null
+    }
+  ],
+  "links": [],
+  "hyperedges": []
+}

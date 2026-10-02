@@ -1,0 +1,25 @@
+{
+  "communities": {
+    "0": [
+      "claude_md_graphify"
+    ]
+  },
+  "cohesion": {
+    "0": 1.0
+  },
+  "gods": [
+    {
+      "id": "claude_md_graphify",
+      "label": "graphify",
+      "degree": 0
+    }
+  ],
+  "surprises": [],
+  "questions": [
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `graphify` to the rest of the system?",
+      "why": "1 weakly-connected nodes found - possible documentation gaps or missing edges."
+    }
+  ]
+}
