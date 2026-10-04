@@ -18,7 +18,6 @@ public class ReservationRepository {
     }
 
     public List<Long> getSeatIdsForLabels(String showId, List<String> labels) {
-        // Using a temporary table or a long IN clause for the labels
         String sql = "SELECT seat_id FROM seats WHERE show_id = ? AND seat_number IN (" +
                      String.join(",", Collections.nCopies(labels.size(), "?")) + ")";
 
@@ -26,7 +25,7 @@ public class ReservationRepository {
         params.add(showId);
         params.addAll(labels);
 
-        return jdbcTemplate.queryForList(sql, params, Long.class);
+        return jdbcTemplate.queryForList(sql, Long.class, params.toArray());
     }
 
     public Map<String, Object> getSeatStatus(Long seatId) {

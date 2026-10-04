@@ -47,8 +47,6 @@ public class ReservationController {
 
         ReserveResponse response = reservationService.reserve(userId, showId, request);
 
-        // If it was an idempotent replay, we should theoretically add a header.
-        // For now, simple 201/200 return.
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 }

@@ -18,7 +18,7 @@
         <java.version>11</java.version>
     </properties>
 
-    `n`n<dependencies>
+    <dependencies>
         <!-- Spring Boot Starters -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -84,8 +84,18 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <dependency>`n            <groupId>org.testcontainers</groupId>`n            <artifactId>mysql</artifactId>`n            <version>1.19.7</version>`n            <scope>test</scope>`n        </dependency>
-        <dependency>`n            <groupId>org.testcontainers</groupId>`n            <artifactId>junit-jupiter</artifactId>`n            <version>1.19.7</version>`n            <scope>test</scope>`n        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <version>1.19.7</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>1.19.7</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -97,5 +107,3 @@
         </plugins>
     </build>
 </project>
-
-
