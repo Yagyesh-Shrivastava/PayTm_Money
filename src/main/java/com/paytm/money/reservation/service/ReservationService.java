@@ -9,7 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.interceptor.PessimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -23,13 +23,15 @@ public class ReservationService {
 
     @Autowired
     private ReservationRepository reservationRepository;
+
     @Autowired
-    private ReservationMetrics metrics;
+    private ShowRepository showRepository;
+
+    @Autowired
+    private com.paytm.money.reservation.metrics.ReservationMetrics metrics;
 
     public ReserveResponse reserve(String userId, String showId, ReserveRequest request) {
-
-    public ReserveResponse reserve(String userId, String showId, ReserveRequest request) {
-        // 1. Validation & Normalization
+        // 1. Validation & Normalization (Lightweight)
         List<String> labels = request.seats.stream()
                 .distinct()
                 .sorted()
@@ -39,60 +41,20 @@ public class ReservationService {
             throw new ReservationException("bad_request", "Duplicate seats in request", HttpStatus.BAD_REQUEST);
         }
 
-        // Load show (Immutable)
-        var showMapOpt = showRepository.findShowById(showId);
-        if (showMapOpt.isEmpty()) {
-            throw new ReservationException("not_found", "Show not found", HttpStatus.NOT_FOUND);
-        }
-        Map<String, Object> show = showMapOpt.get();
-        int perUserLimit = ((Number) show.get("per_user_limit")).intValue();
-        long pricePaise = ((Number) show.get("show_price_paise")).longValue();
-
-        if (labels.size() > perUserLimit) {
-            metrics.incrementDeclined("per-user-limit");
-            throw new ReservationException("per_user_limit", "Request exceeds per-user limit", HttpStatus.CONFLICT);
-        }
-
         String requestHash = computeHash(showId, labels);
         String idempotencyKey = request.idempotency_key;
 
-        // 2. Idempotency Fast Path (Non-locking)
-        var existingRes = reservationRepository.findByIdempotencyKey(userId, idempotencyKey);
-        if (existingRes.isPresent()) {
-            Map<String, Object> res = existingRes.get();
-            if (requestHash.equals(res.get("request_hash"))) {
-                metrics.incrementDeclined("idempotent-replay");
-                return buildResponseFromMap(res);
-            } else {
-                metrics.incrementDeclined("key-mismatch");
-                throw new ReservationException("idempotency_key_mismatch", "Key used with different request", HttpStatus.CONFLICT);
-            }
-        }
-
-        // 3. Resolve Labels to IDs & Fast Decline
-        List<Long> seatIds = reservationRepository.getSeatIdsForLabels(showId, labels);
-        if (seatIds.size() != labels.size()) {
-            throw new ReservationException("not_found", "One or more seats not found", HttpStatus.NOT_FOUND);
-        }
-
-        for (Long id : seatIds) {
-            var statusMap = reservationRepository.getSeatStatus(id);
-            if (statusMap != null && "confirmed".equals(statusMap.get("seat_status"))) {
-                metrics.incrementDeclined("seat-taken");
-                throw new ReservationException("seat_taken", "One or more seats already taken", HttpStatus.CONFLICT);
-            }
-        }
-
-        // 4. User Row Init (Outside transaction to avoid pool deadlock)
-        reservationRepository.initUserRow(showId, userId);
-
-        // 5. Transactional Loop with Retries
-        return executeWithRetry(() -> executeReservationTransaction(userId, showId, idempotencyKey, requestHash, labels, seatIds, pricePaise, perUserLimit));
+        // 2. Transactional Loop with Retries
+        // We move ALL checks (Idempotency, Limit, Seat Status) inside the transaction
+        // to eliminate the "Fast Path Gap" and ensure atomic decisions.
+        return executeWithRetry(() -> executeReservationTransaction(userId, showId, idempotencyKey, requestHash, labels, pricePaise(showId), perUserLimit(showId)));
     }
 
     @Transactional
-    protected ReserveResponse executeReservationTransaction(String userId, String showId, String key, String hash, List<String> labels, List<Long> seatIds, long price, int limit) {
-        // A. Lock User Row
+    protected ReserveResponse executeReservationTransaction(String userId, String showId, String key, String hash, List<String> labels, long price, int limit) {
+        // A. Lock User Row (and initialize if missing)
+        // We use a specific strategy to avoid the pre-transaction bottleneck
+        ensureUserRowExists(showId, userId);
         reservationRepository.lockUserRow(showId, userId);
 
         // B. Authoritative Idempotency Check
@@ -100,8 +62,10 @@ public class ReservationService {
         if (existingRes.isPresent()) {
             Map<String, Object> res = existingRes.get();
             if (hash.equals(res.get("request_hash"))) {
+                metrics.incrementDeclined("idempotent-replay");
                 return buildResponseFromMap(res);
             } else {
+                metrics.incrementDeclined("key-mismatch");
                 throw new ReservationException("idempotency_key_mismatch", "Key mismatch", HttpStatus.CONFLICT);
             }
         }
@@ -114,6 +78,11 @@ public class ReservationService {
         }
 
         // D. Lock Seats in Sorted Order
+        List<Long> seatIds = reservationRepository.getSeatIdsForLabels(showId, labels);
+        if (seatIds.size() != labels.size()) {
+            throw new ReservationException("not_found", "One or more seats not found", HttpStatus.NOT_FOUND);
+        }
+
         List<Map<String, Object>> lockedSeats = reservationRepository.lockSeats(seatIds);
         for (Map<String, Object> seat : lockedSeats) {
             if (!"available".equals(seat.get("seat_status"))) {
@@ -135,6 +104,24 @@ public class ReservationService {
         return new ReserveResponse(reservationId, showId, userId, labels, totalAmount, "confirmed");
     }
 
+    private void ensureUserRowExists(String showId, String userId) {
+        // In a production system, we'd handle the missing row via a try-catch on lockUserRow
+        // or by utilizing the ON DUPLICATE KEY UPDATE here.
+        reservationRepository.initUserRow(showId, userId);
+    }
+
+    private long pricePaise(String showId) {
+        var show = showRepository.findShowById(showId)
+                .orElseThrow(() -> new ReservationException("not_found", "Show not found", HttpStatus.NOT_FOUND));
+        return ((Number) show.get("show_price_paise")).longValue();
+    }
+
+    private int perUserLimit(String showId) {
+        var show = showRepository.findShowById(showId)
+                .orElseThrow(() -> new ReservationException("not_found", "Show not found", HttpStatus.NOT_FOUND));
+        return ((Number) show.get("per_user_limit")).intValue();
+    }
+
     private ReserveResponse executeWithRetry(java.util.function.Supplier<ReserveResponse> action) {
         int attempts = 0;
         while (true) {
@@ -146,7 +133,7 @@ public class ReservationService {
                     throw new ReservationException("contention", "Too many concurrent requests", HttpStatus.CONFLICT);
                 }
                 try {
-                    Thread.sleep(10 + (long)(Math.random() * 50)); // Jittered backoff
+                    Thread.sleep(10 + (long)(Math.random() * 50));
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException(ie);
@@ -158,7 +145,8 @@ public class ReservationService {
     private String computeHash(String showId, List<String> labels) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String input = showId + String.join("", labels);
+            // Hardening: use a delimiter to prevent collision (e.g., "A1"+"A2" vs "A1A"+"2")
+            String input = showId + "|" + String.join("|", labels);
             byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder hexString = new StringBuilder();
             for (byte b : hash) {
