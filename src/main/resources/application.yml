@@ -1,0 +1,47 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/reservation_db?rewriteBatchedStatements=true&cachePrepStmts=true&serverTimezone=UTC}
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 30
+      connection-timeout: 30000
+      # Important: Isolation level for deadlock prevention and performance
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+      connection-init-sql: SET SESSION innodb_lock_wait_timeout=20
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+jackson:
+  deserialization:
+    # Critical: prevent silent truncation of paise (long)
+    accept-float-as-int: false
+
+server:
+  port: ${PORT:8080}
+  tomcat:
+    threads:
+      max: 400
+    accept-count: 1000
+    max-connections: 10000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    mysql:
+      enabled: true
+
+logging:
+  level:
+    root: INFO
+    com.paytm.money.reservation: DEBUG
